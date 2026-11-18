@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,9 +11,18 @@ import (
 	"time"
 )
 
+type CheckResult struct {
+	URL        string  `json:"url"`
+	State      string  `json:"state"`
+	Status     int     `json:"status"`
+	DurationMS float64 `json:"duration_ms"`
+	Error      string  `json:"error,omitempty"`
+}
+
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum time per request")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -40,18 +50,34 @@ func run(args []string, out, diagnostics io.Writer) int {
 		started := time.Now()
 		response, err := client.Get(target)
 		elapsed := time.Since(started)
+
+		result := CheckResult{URL: target, State: "UP", DurationMS: float64(elapsed) / float64(time.Millisecond)}
 		if err != nil {
-			fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q\n", elapsed, target, err)
-			exitCode = 1
-			continue
+			result.State = "DOWN"
+			result.Error = err.Error()
+		} else {
+			result.Status = response.StatusCode
+			response.Body.Close()
+			if response.StatusCode < 200 || response.StatusCode >= 300 {
+				result.State = "DOWN"
+			}
 		}
-		response.Body.Close()
-		state := "UP"
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			state = "DOWN"
+		if result.State == "DOWN" {
 			exitCode = 1
 		}
-		fmt.Fprintf(out, "%s status=%d duration=%s url=%q\n", state, response.StatusCode, elapsed, target)
+		var outputErr error
+		if *jsonOutput {
+			outputErr = json.NewEncoder(out).Encode(result)
+		} else if err != nil {
+			_, outputErr = fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q\n", elapsed, target, err)
+		} else {
+			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q\n", result.State, result.Status, elapsed, target)
+		}
+		if outputErr != nil {
+			fmt.Fprintln(diagnostics, "write results:", outputErr)
+			return 2
+		}
+
 	}
 	return exitCode
 }

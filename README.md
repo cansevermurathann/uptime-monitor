@@ -34,3 +34,16 @@ checks passing, 1 for any failed check, and 2 for invalid arguments.
 
 Tests use local HTTP servers for successful responses, redirects, server
 errors, timeout cancellation, and continued checking after a failure.
+
+## Machine-readable output
+
+Add `-json` to emit one JSON object per target, in input order:
+
+```sh
+./uptime-monitor -json -timeout 2s http://localhost:8000
+```
+
+Each object contains `url`, `state`, `status`, and numeric `duration_ms`.
+Connection failures additionally contain an `error` string and status 0.
+JSON output uses the same exit codes as text output. Output write failures
+return exit code 2 and write a diagnostic to stderr.
