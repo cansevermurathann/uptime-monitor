@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStatusesAndContinuedChecks(t *testing.T) {
@@ -96,6 +97,62 @@ func TestOutputFailure(t *testing.T) {
 		var diagnostics bytes.Buffer
 		if run(args, brokenWriter{}, &diagnostics) != 2 || !strings.Contains(diagnostics.String(), "write results") {
 			t.Fatal(diagnostics.String())
+		}
+	}
+}
+
+func TestBoundedConcurrencyAndOutputOrder(t *testing.T) {
+	entered := make(chan string, 3)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- r.URL.Path
+		<-release
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	var out, diagnostics bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- run([]string{"-json", "-concurrency", "2", server.URL + "/a", server.URL + "/b", server.URL + "/c"}, &out, &diagnostics)
+	}()
+	// Both workers must reach the server before either is released.
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			close(release)
+			<-done
+			t.Fatal("two concurrent requests did not arrive")
+		}
+	}
+	select {
+	case <-entered:
+		close(release)
+		<-done
+		t.Fatal("concurrency limit exceeded")
+	default:
+	}
+	close(release)
+	if code := <-done; code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	decoder := json.NewDecoder(&out)
+	for _, path := range []string{"/a", "/b", "/c"} {
+		var result CheckResult
+		if err := decoder.Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		if result.URL != server.URL+path {
+			t.Fatalf("unexpected order: %+v", result)
+		}
+	}
+}
+
+func TestInvalidConcurrency(t *testing.T) {
+	for _, value := range []string{"0", "33"} {
+		var out, diagnostics bytes.Buffer
+		if run([]string{"-concurrency", value, "http://localhost"}, &out, &diagnostics) != 2 {
+			t.Fatal(value)
 		}
 	}
 }
