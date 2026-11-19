@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +156,47 @@ func TestInvalidConcurrency(t *testing.T) {
 		if run([]string{"-concurrency", value, "http://localhost"}, &out, &diagnostics) != 2 {
 			t.Fatal(value)
 		}
+	}
+}
+
+func TestFileTargets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "targets.txt")
+	content := "# local checks\r\n  " + server.URL + "/first  \r\n\r\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostics bytes.Buffer
+	code := run([]string{"-json", "-file", path, server.URL + "/second"}, &out, &diagnostics)
+	if code != 0 {
+		t.Fatalf("exit=%d: %s", code, &diagnostics)
+	}
+	decoder := json.NewDecoder(&out)
+	for _, suffix := range []string{"/first", "/second"} {
+		var result CheckResult
+		if err := decoder.Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		if result.URL != server.URL+suffix {
+			t.Fatalf("%+v", result)
+		}
+	}
+}
+
+func TestInvalidFileTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "targets.txt")
+	for _, content := range []string{"# no targets\n", "ftp://localhost\n", strings.Repeat("x", 70*1024)} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var out, diagnostics bytes.Buffer
+		if run([]string{"-file", path}, &out, &diagnostics) != 2 || out.Len() != 0 {
+			t.Fatal(content[:min(len(content), 20)])
+		}
+	}
+	var out, diagnostics bytes.Buffer
+	if run([]string{"-file", path + ".missing"}, &out, &diagnostics) != 2 {
+		t.Fatal("missing file accepted")
 	}
 }

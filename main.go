@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,6 +25,7 @@ type CheckResult struct {
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	file := flags.String("file", "", "read one HTTP URL per line")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum time per request")
@@ -32,11 +35,20 @@ func run(args []string, out, diagnostics io.Writer) int {
 		}
 		return 2
 	}
-	if flags.NArg() == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 {
+	targets := flags.Args()
+	if *file != "" {
+		loaded, err := loadTargets(*file)
+		if err != nil {
+			fmt.Fprintln(diagnostics, "read targets:", err)
+			return 2
+		}
+		targets = append(loaded, targets...)
+	}
+	if len(targets) == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 {
 		fmt.Fprintln(diagnostics, "provide HTTP URLs, a positive -timeout, and -concurrency from 1 to 32")
 		return 2
 	}
-	for _, target := range flags.Args() {
+	for _, target := range targets {
 		u, err := url.Parse(target)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
 			fmt.Fprintln(diagnostics, "each target must be an HTTP(S) URL without credentials")
@@ -47,7 +59,6 @@ func run(args []string, out, diagnostics io.Writer) int {
 		return http.ErrUseLastResponse
 	}}
 	defer client.CloseIdleConnections()
-	targets := flags.Args()
 	results := make([]CheckResult, len(targets))
 	jobs := make(chan int)
 	var group sync.WaitGroup
@@ -87,6 +98,27 @@ func run(args []string, out, diagnostics io.Writer) int {
 
 	}
 	return exitCode
+}
+
+func loadTargets(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var targets []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		targets = append(targets, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return targets, nil
 }
 
 func check(client *http.Client, target string) CheckResult {

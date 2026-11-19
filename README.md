@@ -58,3 +58,23 @@ Each request keeps its own timeout, which starts when that request begins.
 ```sh
 ./uptime-monitor -json -concurrency 4 -timeout 2s http://localhost:8000 http://localhost:8001
 ```
+
+## Reuse a target list
+
+Create a UTF-8 text file with one URL per line. Blank lines and lines beginning
+with `#` are ignored, and surrounding whitespace is trimmed. Both Windows
+and Unix line endings are supported.
+
+```text
+# Local services
+http://127.0.0.1:8000/
+http://127.0.0.1:8001/
+```
+
+```sh
+./uptime-monitor -file targets.txt -concurrency 4 -json
+```
+
+File targets precede any positional URLs. All targets are validated before
+requests start. Missing files, unreadable files, lines above the scanner's
+64 KiB limit, and invalid URLs return exit code 2.
