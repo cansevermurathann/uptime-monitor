@@ -200,3 +200,27 @@ func TestInvalidFileTargets(t *testing.T) {
 		t.Fatal("missing file accepted")
 	}
 }
+
+func TestLatencyBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	defer server.Close()
+	for _, budget := range []string{"0", "10s", "1ns"} {
+		var out, diagnostics bytes.Buffer
+		code := run([]string{"-json", "-max-latency", budget, server.URL}, &out, &diagnostics)
+		var result CheckResult
+		if err := json.NewDecoder(&out).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		wantState, wantCode := "UP", 0
+		if budget == "1ns" {
+			wantState, wantCode = "SLOW", 1
+		}
+		if result.State != wantState || code != wantCode || result.Status != 204 {
+			t.Fatalf("budget=%s result=%+v exit=%d", budget, result, code)
+		}
+	}
+	var out, diagnostics bytes.Buffer
+	if run([]string{"-max-latency", "-1s", server.URL}, &out, &diagnostics) != 2 {
+		t.Fatal("negative latency budget accepted")
+	}
+}

@@ -28,6 +28,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 	file := flags.String("file", "", "read one HTTP URL per line")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
+	maxLatency := flags.Duration("max-latency", 0, "fail successful checks above this response-header latency (0 disables)")
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum time per request")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -44,8 +45,8 @@ func run(args []string, out, diagnostics io.Writer) int {
 		}
 		targets = append(loaded, targets...)
 	}
-	if len(targets) == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 {
-		fmt.Fprintln(diagnostics, "provide HTTP URLs, a positive -timeout, and -concurrency from 1 to 32")
+	if len(targets) == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 || *maxLatency < 0 {
+		fmt.Fprintln(diagnostics, "provide HTTP URLs, a positive -timeout, -concurrency from 1 to 32, and non-negative -max-latency")
 		return 2
 	}
 	for _, target := range targets {
@@ -68,6 +69,9 @@ func run(args []string, out, diagnostics io.Writer) int {
 			defer group.Done()
 			for index := range jobs {
 				results[index] = check(client, targets[index])
+				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
+					results[index].State = "SLOW"
+				}
 			}
 		}()
 	}
@@ -80,7 +84,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 	for _, result := range results {
 		target := result.URL
 		elapsed := time.Duration(result.DurationMS * float64(time.Millisecond))
-		if result.State == "DOWN" {
+		if result.State != "UP" {
 			exitCode = 1
 		}
 		var outputErr error

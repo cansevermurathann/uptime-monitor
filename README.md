@@ -85,3 +85,14 @@ The [Go checks workflow](https://github.com/cansevermurathann/uptime-monitor/act
 checks formatting, runs local-server tests with the race detector, analyzes
 code with `go vet`, and builds the CLI. It runs on Linux with Go 1.24 and 1.27
 for pushes and pull requests targeting `main`, and can be started manually.
+
+## Enforce a response-time budget
+
+```sh
+./uptime-monitor -max-latency 500ms -timeout 2s -json http://localhost:8000
+```
+
+A successful HTTP 2xx response taking more than the budget is reported as
+`SLOW` with its actual status code and exit code 1. The budget measures time
+to response headers. `-timeout` still cancels requests that take too long.
+The default budget is 0 (disabled). Negative budgets are configuration errors.
