@@ -78,3 +78,10 @@ http://127.0.0.1:8001/
 File targets precede any positional URLs. All targets are validated before
 requests start. Missing files, unreadable files, lines above the scanner's
 64 KiB limit, and invalid URLs return exit code 2.
+
+## Continuous integration
+
+The [Go checks workflow](https://github.com/cansevermurathann/uptime-monitor/actions/workflows/tests.yml)
+checks formatting, runs local-server tests with the race detector, analyzes
+code with `go vet`, and builds the CLI. It runs on Linux with Go 1.24 and 1.27
+for pushes and pull requests targeting `main`, and can be started manually.
