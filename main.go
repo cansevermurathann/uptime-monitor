@@ -27,6 +27,7 @@ type CheckResult struct {
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
 	file := flags.String("file", "", "read one HTTP URL per line")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
@@ -38,6 +39,11 @@ func run(args []string, out, diagnostics io.Writer) int {
 		}
 		return 2
 	}
+	if *expectedStatus != 0 && (*expectedStatus < 200 || *expectedStatus > 599) {
+		fmt.Fprintln(diagnostics, "expect-status must be 0 or an HTTP status from 200 to 599")
+		return 2
+	}
+
 	targets := flags.Args()
 	if *file != "" {
 		loaded, err := loadTargets(*file)
@@ -71,6 +77,12 @@ func run(args []string, out, diagnostics io.Writer) int {
 			defer group.Done()
 			for index := range jobs {
 				results[index] = check(client, targets[index])
+				if *expectedStatus != 0 && results[index].Error == "" {
+					results[index].State = "DOWN"
+					if results[index].Status == *expectedStatus {
+						results[index].State = "UP"
+					}
+				}
 				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
 					results[index].State = "SLOW"
 				}

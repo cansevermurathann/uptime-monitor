@@ -259,3 +259,32 @@ func TestSensitiveURLPartsAreNotReported(t *testing.T) {
 		}
 	}
 }
+
+func TestExpectedStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/redirect")
+		w.WriteHeader(302)
+	}))
+	defer server.Close()
+	for _, expected := range []string{"0", "204", "302"} {
+		var out, diagnostics bytes.Buffer
+		code := run([]string{"-json", "-expect-status", expected, server.URL}, &out, &diagnostics)
+		var result CheckResult
+		if err := json.NewDecoder(&out).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		wantCode, wantState := 1, "DOWN"
+		if expected == "302" {
+			wantCode, wantState = 0, "UP"
+		}
+		if code != wantCode || result.State != wantState || result.Status != 302 {
+			t.Fatalf("expected=%s result=%+v exit=%d", expected, result, code)
+		}
+	}
+	for _, value := range []string{"-1", "199", "600"} {
+		var out, diagnostics bytes.Buffer
+		if run([]string{"-expect-status", value, server.URL}, &out, &diagnostics) != 2 {
+			t.Fatalf("invalid status accepted: %s", value)
+		}
+	}
+}

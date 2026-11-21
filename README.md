@@ -104,3 +104,17 @@ The HTTP request still uses the configured query string. Request errors use
 generic messages (`request failed` or `request timed out`) so Go's error
 strings cannot repeat the full request URL. URL paths and hostnames remain
 visible in reports.
+
+## Require an exact status
+
+Use `-expect-status 204` when a health endpoint must return a specific HTTP
+code. The default is 0, which accepts any 2xx response. Explicit expectations
+accept codes from 200 through 599, including redirects without following them.
+
+```sh
+./uptime-monitor -expect-status 204 -json http://localhost:8000/health
+```
+
+A different response is DOWN with exit code 1. Connection errors remain DOWN
+regardless of the expected code. The latency budget also applies to responses
+that match an explicit expected status.
