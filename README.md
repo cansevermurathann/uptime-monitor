@@ -96,3 +96,11 @@ A successful HTTP 2xx response taking more than the budget is reported as
 `SLOW` with its actual status code and exit code 1. The budget measures time
 to response headers. `-timeout` still cancels requests that take too long.
 The default budget is 0 (disabled). Negative budgets are configuration errors.
+
+## URL reporting
+
+Reports omit URL query strings and fragments, which can contain access tokens.
+The HTTP request still uses the configured query string. Request errors use
+generic messages (`request failed` or `request timed out`) so Go's error
+strings cannot repeat the full request URL. URL paths and hostnames remain
+visible in reports.

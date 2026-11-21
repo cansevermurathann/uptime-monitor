@@ -224,3 +224,38 @@ func TestLatencyBudget(t *testing.T) {
 		t.Fatal("negative latency budget accepted")
 	}
 }
+
+func TestSensitiveURLPartsAreNotReported(t *testing.T) {
+	received := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.URL.RawQuery
+		w.WriteHeader(204)
+	}))
+	for _, format := range [][]string{{}, {"-json"}} {
+		var out, diagnostics bytes.Buffer
+		args := append(append([]string{}, format...), server.URL+"/health?token=private-value#private-fragment")
+		if run(args, &out, &diagnostics) != 0 {
+			t.Fatal(diagnostics.String())
+		}
+		if query := <-received; query != "token=private-value" {
+			t.Fatal(query)
+		}
+		if strings.Contains(out.String(), "private") || strings.Contains(out.String(), "token") {
+			t.Fatal(out.String())
+		}
+		if !strings.Contains(out.String(), server.URL+"/health") {
+			t.Fatal(out.String())
+		}
+	}
+	server.Close()
+	for _, format := range [][]string{{}, {"-json"}} {
+		var out, diagnostics bytes.Buffer
+		args := append(append([]string{}, format...), server.URL+"?token=private-value#private-fragment")
+		if run(args, &out, &diagnostics) != 1 {
+			t.Fatal("expected connection failure")
+		}
+		if strings.Contains(out.String(), "private") || strings.Contains(out.String(), "token") {
+			t.Fatal(out.String())
+		}
+	}
+}

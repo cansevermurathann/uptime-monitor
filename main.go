@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -130,10 +132,19 @@ func check(client *http.Client, target string) CheckResult {
 	response, err := client.Get(target)
 	elapsed := time.Since(started)
 
-	result := CheckResult{URL: target, State: "UP", DurationMS: float64(elapsed) / float64(time.Millisecond)}
+	displayURL, _ := url.Parse(target)
+	displayURL.RawQuery = ""
+	displayURL.ForceQuery = false
+	displayURL.Fragment = ""
+	displayURL.RawFragment = ""
+	result := CheckResult{URL: displayURL.String(), State: "UP", DurationMS: float64(elapsed) / float64(time.Millisecond)}
 	if err != nil {
 		result.State = "DOWN"
-		result.Error = err.Error()
+		result.Error = "request failed"
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			result.Error = "request timed out"
+		}
 	} else {
 		result.Status = response.StatusCode
 		response.Body.Close()
