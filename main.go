@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,7 @@ type CheckResult struct {
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
 	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
 	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
 	file := flags.String("file", "", "read one HTTP URL per line")
@@ -38,6 +40,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	if *deadline < 0 {
+		fmt.Fprintln(diagnostics, "deadline must be non-negative")
 		return 2
 	}
 	if *method != http.MethodGet && *method != http.MethodHead {
@@ -73,6 +79,12 @@ func run(args []string, out, diagnostics io.Writer) int {
 		return http.ErrUseLastResponse
 	}}
 	defer client.CloseIdleConnections()
+	ctx := context.Background()
+	if *deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *deadline)
+		defer cancel()
+	}
 	results := make([]CheckResult, len(targets))
 	jobs := make(chan int)
 	var group sync.WaitGroup
@@ -81,7 +93,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				results[index] = check(client, targets[index], *method)
+				results[index] = check(ctx, client, targets[index], *method)
 				if *expectedStatus != 0 && results[index].Error == "" {
 					results[index].State = "DOWN"
 					if results[index].Status == *expectedStatus {
@@ -144,9 +156,9 @@ func loadTargets(path string) ([]string, error) {
 	return targets, nil
 }
 
-func check(client *http.Client, target, method string) CheckResult {
+func check(ctx context.Context, client *http.Client, target, method string) CheckResult {
 	started := time.Now()
-	request, err := http.NewRequest(method, target, nil)
+	request, err := http.NewRequestWithContext(ctx, method, target, nil)
 	var response *http.Response
 	if err == nil {
 		response, err = client.Do(request)

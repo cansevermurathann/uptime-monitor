@@ -136,3 +136,25 @@ There is no automatic fallback to GET. Only uppercase GET and HEAD are accepted;
 other methods return exit code 2 before any requests are sent. Timeout, exact
 status expectations, latency budgets, redirects, and output formats keep the
 same behavior for both methods.
+
+## Bound a whole batch of checks
+
+Use a shared deadline when a CI step or scheduled check must finish its network
+work within a fixed budget:
+
+```sh
+./uptime-monitor -deadline 10s -timeout 3s -concurrency 4 -file targets.txt -json
+```
+
+The deadline starts after target loading and validation, immediately before the
+workers start. It includes time waiting in the worker queue. At expiry, active
+requests are canceled and queued checks return without sending new requests.
+Each unfinished target is reported as DOWN with status 0 and
+`request timed out`; results already obtained are preserved in input order.
+Any failed check still returns exit code 1. A deadline is a local budget
+failure and does not prove that every affected service is unavailable.
+
+The per-request timeout remains in effect: whichever limit expires first wins.
+The default deadline is 0 (disabled); negative values return exit code 2 before
+sending requests. Loading files and writing results are outside this network
+budget, and normal cancellation/scheduling overhead may add a small delay.

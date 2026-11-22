@@ -374,3 +374,94 @@ func TestHeadTimeout(t *testing.T) {
 		t.Fatalf("exit=%d out=%s diagnostics=%s", code, &out, &diagnostics)
 	}
 }
+
+func TestBatchDeadlineCancelsActiveAndQueuedChecks(t *testing.T) {
+	for _, workers := range []string{"1", "2"} {
+		t.Run("workers="+workers, func(t *testing.T) {
+			requests := make(chan string, 10)
+			canceled := make(chan struct{}, 10)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests <- r.URL.Path
+				if r.URL.Path == "/fast" {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				<-r.Context().Done()
+				canceled <- struct{}{}
+			}))
+			defer server.Close()
+			args := []string{"-deadline", "200ms", "-timeout", "5s", "-concurrency", workers, "-json",
+				server.URL + "/fast", server.URL + "/slow1", server.URL + "/slow2",
+				server.URL + "/slow3", server.URL + "/slow4"}
+			var out, diagnostics bytes.Buffer
+			started := time.Now()
+			code := run(args, &out, &diagnostics)
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
+				t.Fatalf("batch took %s despite shared deadline", elapsed)
+			}
+			if code != 1 {
+				t.Fatalf("exit=%d diagnostic=%s", code, &diagnostics)
+			}
+			decoder := json.NewDecoder(&out)
+			for i, target := range args[len(args)-5:] {
+				var result CheckResult
+				if err := decoder.Decode(&result); err != nil {
+					t.Fatal(err)
+				}
+				if result.URL != target {
+					t.Fatalf("out of order: %+v", result)
+				}
+				if i == 0 {
+					if result.State != "UP" || result.Status != 204 {
+						t.Fatalf("lost successful result: %+v", result)
+					}
+				} else if result.State != "DOWN" || result.Status != 0 || result.Error != "request timed out" {
+					t.Fatalf("unfinished check: %+v", result)
+				}
+			}
+			var extra CheckResult
+			if err := decoder.Decode(&extra); err != io.EOF {
+				t.Fatalf("extra output: %v", err)
+			}
+			maxRequests := 2
+			if workers == "2" {
+				maxRequests = 3
+			}
+			if len(requests) < 2 || len(requests) > maxRequests {
+				t.Fatalf("queued targets reached server: %d requests", len(requests))
+			}
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("server did not observe cancellation")
+			}
+		})
+	}
+}
+
+func TestRequestTimeoutWinsBeforeBatchDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slow" {
+			<-r.Context().Done()
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	var out, diagnostics bytes.Buffer
+	code := run([]string{"-deadline", "5s", "-timeout", "50ms", server.URL + "/slow", server.URL + "/fast"}, &out, &diagnostics)
+	if code != 1 || !strings.Contains(out.String(), "request timed out") || !strings.Contains(out.String(), "UP status=204") {
+		t.Fatalf("exit=%d out=%s diagnostic=%s", code, &out, &diagnostics)
+	}
+}
+
+func TestNegativeDeadlineSendsNoRequests(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests <- struct{}{} }))
+	defer server.Close()
+	var out, diagnostics bytes.Buffer
+	if code := run([]string{"-deadline", "-1s", server.URL}, &out, &diagnostics); code != 2 ||
+		out.Len() != 0 || !strings.Contains(diagnostics.String(), "deadline must be non-negative") || len(requests) != 0 {
+		t.Fatalf("exit=%d out=%s diagnostic=%s", code, &out, &diagnostics)
+	}
+}
