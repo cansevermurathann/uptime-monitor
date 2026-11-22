@@ -118,3 +118,21 @@ accept codes from 200 through 599, including redirects without following them.
 A different response is DOWN with exit code 1. Connection errors remain DOWN
 regardless of the expected code. The latency budget also applies to responses
 that match an explicit expected status.
+
+## Check with HEAD
+
+Use HEAD for endpoints that support availability checks without transferring
+a response body. GET remains the default; the selected method applies to all
+targets in the invocation.
+
+```sh
+./uptime-monitor -method HEAD -json http://127.0.0.1:8000/
+./uptime-monitor -method HEAD -expect-status 204 -timeout 2s http://localhost:8001/health
+```
+
+The local Python server in the demo supports HEAD. Some services reject HEAD
+with 405; that response is reported as DOWN under the default status policy.
+There is no automatic fallback to GET. Only uppercase GET and HEAD are accepted;
+other methods return exit code 2 before any requests are sent. Timeout, exact
+status expectations, latency budgets, redirects, and output formats keep the
+same behavior for both methods.

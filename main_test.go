@@ -288,3 +288,89 @@ func TestExpectedStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestMethods(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, wantMethod string
+		status, wantExit         int
+		expect                   string
+	}{
+		{"default GET", "", "GET", 200, 0, ""},
+		{"explicit GET", "GET", "GET", 200, 0, ""},
+		{"HEAD success", "HEAD", "HEAD", 204, 0, ""},
+		{"HEAD unsupported", "HEAD", "HEAD", 405, 1, ""},
+		{"HEAD expected redirect", "HEAD", "HEAD", 302, 0, "302"},
+		{"HEAD unexpected status", "HEAD", "HEAD", 200, 1, "204"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			methods := make(chan string, 2)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				methods <- r.Method
+				w.Header().Set("Location", "/redirected")
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			args := []string{"-json"}
+			if tc.method != "" {
+				args = append(args, "-method", tc.method)
+			}
+			if tc.expect != "" {
+				args = append(args, "-expect-status", tc.expect)
+			}
+			args = append(args, server.URL)
+			var out, diagnostics bytes.Buffer
+			code := run(args, &out, &diagnostics)
+			if code != tc.wantExit {
+				t.Fatalf("exit=%d diagnostic=%s", code, &diagnostics)
+			}
+			select {
+			case method := <-methods:
+				if method != tc.wantMethod {
+					t.Fatalf("method=%s want=%s", method, tc.wantMethod)
+				}
+			default:
+				t.Fatal("no request received")
+			}
+			if len(methods) != 0 {
+				t.Fatal("unexpected redirect or fallback request")
+			}
+			var result CheckResult
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != tc.status || result.DurationMS < 0 {
+				t.Fatalf("unexpected result: %+v", result)
+			}
+		})
+	}
+}
+
+func TestInvalidMethodSendsNoRequests(t *testing.T) {
+	requests := make(chan struct{}, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+	}))
+	defer server.Close()
+	for _, method := range []string{"", "head", "POST", "DELETE", "GET\r\n"} {
+		var out, diagnostics bytes.Buffer
+		if code := run([]string{"-method", method, server.URL}, &out, &diagnostics); code != 2 ||
+			out.Len() != 0 || !strings.Contains(diagnostics.String(), "method must be GET or HEAD") {
+			t.Fatalf("method=%q exit=%d out=%s diagnostics=%s", method, code, &out, &diagnostics)
+		}
+	}
+	if len(requests) != 0 {
+		t.Fatal("invalid method sent a request")
+	}
+}
+
+func TestHeadTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	var out, diagnostics bytes.Buffer
+	if code := run([]string{"-method", "HEAD", "-timeout", "50ms", server.URL}, &out, &diagnostics); code != 1 ||
+		!strings.Contains(out.String(), "request timed out") {
+		t.Fatalf("exit=%d out=%s diagnostics=%s", code, &out, &diagnostics)
+	}
+}

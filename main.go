@@ -27,6 +27,7 @@ type CheckResult struct {
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
 	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
 	file := flags.String("file", "", "read one HTTP URL per line")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
@@ -37,6 +38,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	if *method != http.MethodGet && *method != http.MethodHead {
+		fmt.Fprintln(diagnostics, "method must be GET or HEAD")
 		return 2
 	}
 	if *expectedStatus != 0 && (*expectedStatus < 200 || *expectedStatus > 599) {
@@ -76,7 +81,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				results[index] = check(client, targets[index])
+				results[index] = check(client, targets[index], *method)
 				if *expectedStatus != 0 && results[index].Error == "" {
 					results[index].State = "DOWN"
 					if results[index].Status == *expectedStatus {
@@ -139,9 +144,13 @@ func loadTargets(path string) ([]string, error) {
 	return targets, nil
 }
 
-func check(client *http.Client, target string) CheckResult {
+func check(client *http.Client, target, method string) CheckResult {
 	started := time.Now()
-	response, err := client.Get(target)
+	request, err := http.NewRequest(method, target, nil)
+	var response *http.Response
+	if err == nil {
+		response, err = client.Do(request)
+	}
 	elapsed := time.Since(started)
 
 	displayURL, _ := url.Parse(target)
