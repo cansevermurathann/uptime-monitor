@@ -158,3 +158,28 @@ The per-request timeout remains in effect: whichever limit expires first wins.
 The default deadline is 0 (disabled); negative values return exit code 2 before
 sending requests. Loading files and writing results are outside this network
 budget, and normal cancellation/scheduling overhead may add a small delay.
+
+## Trust an internal HTTPS certificate authority
+
+For services signed by a private development or company CA, provide the public
+CA certificate bundle as a PEM file:
+
+```sh
+./uptime-monitor -ca-file company-ca.pem -timeout 2s -json https://localhost:8443/health
+```
+
+The bundle extends the operating system's trusted roots for this invocation.
+It applies to all HTTPS targets in the invocation. Normal certificate chain,
+expiration, and hostname verification remain enabled. A missing file, a file
+without any parseable PEM certificates, or failure to load the system roots
+returns exit code 2 before any requests start. TLS verification failures are
+reported as DOWN with status 0 and exit code 1.
+
+Only include public certificates in this file; private keys are unnecessary.
+Trust only CA certificates you intend to authorize. The tool does not modify
+the system trust store or the process-wide default HTTP transport. Without
+`-ca-file`, the normal system trust settings apply.
+
+Tests generate temporary certificates and local TLS servers to cover trusted
+and untrusted issuers, incorrect hostnames, and expired certificates. No
+certificate keys or external HTTPS services are needed to run the tests.

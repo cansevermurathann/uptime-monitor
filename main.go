@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,6 +30,7 @@ type CheckResult struct {
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	caFile := flags.String("ca-file", "", "PEM certificates to trust in addition to system roots")
 	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
 	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
 	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
@@ -75,7 +78,12 @@ func run(args []string, out, diagnostics io.Writer) int {
 			return 2
 		}
 	}
-	client := &http.Client{Timeout: *timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	transport, err := newTransport(*caFile)
+	if err != nil {
+		fmt.Fprintln(diagnostics, "configure TLS:", err)
+		return 2
+	}
+	client := &http.Client{Transport: transport, Timeout: *timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	defer client.CloseIdleConnections()
@@ -133,6 +141,27 @@ func run(args []string, out, diagnostics io.Writer) int {
 
 	}
 	return exitCode
+}
+
+// Each invocation owns its transport and its additional trust roots.
+func newTransport(caFile string) (*http.Transport, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if caFile == "" {
+		return transport, nil
+	}
+	data, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("load system roots: %w", err)
+	}
+	if !roots.AppendCertsFromPEM(data) {
+		return nil, errors.New("CA file must contain at least one PEM certificate")
+	}
+	transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+	return transport, nil
 }
 
 func loadTargets(path string) ([]string, error) {
