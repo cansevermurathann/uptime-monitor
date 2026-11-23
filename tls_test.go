@@ -117,7 +117,7 @@ func TestPrivateCATrustAndVerification(t *testing.T) {
 					t.Fatalf("method=%s", method)
 				}
 			} else if result.Status != 0 || result.State != "DOWN" ||
-				result.Error != "request failed" || len(requests) != 0 {
+				result.Error != "request failed" || result.ErrorKind != "tls_verification" || len(requests) != 0 {
 				t.Fatalf("verification was bypassed: %+v", result)
 			}
 		})

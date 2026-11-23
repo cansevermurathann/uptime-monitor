@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +24,7 @@ type CheckResult struct {
 	Status     int     `json:"status"`
 	DurationMS float64 `json:"duration_ms"`
 	Error      string  `json:"error,omitempty"`
+	ErrorKind  string  `json:"error_kind,omitempty"`
 }
 
 func run(args []string, out, diagnostics io.Writer) int {
@@ -130,7 +130,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if *jsonOutput {
 			outputErr = json.NewEncoder(out).Encode(result)
 		} else if result.Error != "" {
-			_, outputErr = fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q\n", elapsed, target, result.Error)
+			_, outputErr = fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q error_kind=%s\n", elapsed, target, result.Error, result.ErrorKind)
 		} else {
 			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q\n", result.State, result.Status, elapsed, target)
 		}
@@ -203,8 +203,8 @@ func check(ctx context.Context, client *http.Client, target, method string) Chec
 	if err != nil {
 		result.State = "DOWN"
 		result.Error = "request failed"
-		var networkError net.Error
-		if errors.As(err, &networkError) && networkError.Timeout() {
+		result.ErrorKind = requestErrorKind(ctx, err)
+		if result.ErrorKind == "timeout" || result.ErrorKind == "batch_deadline" {
 			result.Error = "request timed out"
 		}
 	} else {

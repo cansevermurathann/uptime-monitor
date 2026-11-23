@@ -46,7 +46,7 @@ func TestTimeoutAndNextTarget(t *testing.T) {
 	if code := run([]string{"-timeout", "100ms", slow.URL, fast.URL}, &out, &diagnostics); code != 1 {
 		t.Fatalf("exit=%d", code)
 	}
-	if !strings.Contains(out.String(), "DOWN status=0") || !strings.Contains(out.String(), "UP status=204") {
+	if !strings.Contains(out.String(), "error_kind=timeout") || !strings.Contains(out.String(), "DOWN status=0") || !strings.Contains(out.String(), "UP status=204") {
 		t.Fatal(out.String())
 	}
 }
@@ -415,7 +415,7 @@ func TestBatchDeadlineCancelsActiveAndQueuedChecks(t *testing.T) {
 					if result.State != "UP" || result.Status != 204 {
 						t.Fatalf("lost successful result: %+v", result)
 					}
-				} else if result.State != "DOWN" || result.Status != 0 || result.Error != "request timed out" {
+				} else if result.State != "DOWN" || result.Status != 0 || result.Error != "request timed out" || result.ErrorKind != "batch_deadline" {
 					t.Fatalf("unfinished check: %+v", result)
 				}
 			}

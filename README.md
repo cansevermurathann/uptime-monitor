@@ -183,3 +183,38 @@ the system trust store or the process-wide default HTTP transport. Without
 Tests generate temporary certificates and local TLS servers to cover trusted
 and untrusted issuers, incorrect hostnames, and expired certificates. No
 certificate keys or external HTTPS services are needed to run the tests.
+
+## Diagnose failed requests
+
+Failed requests include a stable `error_kind` field in JSON and
+`error_kind=...` in text output:
+
+| Kind | Meaning |
+| --- | --- |
+| `batch_deadline` | The shared network budget expired for this request |
+| `timeout` | An individual request or network operation timed out |
+| `dns` | A DNS lookup failed without a recognized timeout |
+| `tls_verification` | The server certificate could not be verified |
+| `network` | Another network operation failed, such as connection refusal |
+| `request` | Another request failure not covered above |
+
+Timeout classification takes precedence over DNS or other network errors.
+A shared budget is identified only when the request error wraps
+`context.DeadlineExceeded` and the batch context has expired. Categories describe
+the error observed by Go; they are not a complete diagnosis of the remote service.
+
+```sh
+./uptime-monitor -json -timeout 2s -deadline 5s https://localhost:8443/health
+```
+
+For example, an untrusted local HTTPS certificate produces:
+
+```json
+{"url":"https://localhost:8443/health","state":"DOWN","status":0,"duration_ms":1.2,"error":"request failed","error_kind":"tls_verification"}
+```
+
+Duration varies by request. HTTP responses (including failed status checks and
+SLOW results) omit `error_kind` because an HTTP response was received. Exit
+codes and the existing sanitized `error` messages are unchanged. Categories
+are derived from typed errors without printing underlying error text, so
+request URLs containing query tokens are not exposed by diagnostics.
