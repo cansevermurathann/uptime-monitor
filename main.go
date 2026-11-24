@@ -26,11 +26,13 @@ type CheckResult struct {
 	Error        string     `json:"error,omitempty"`
 	ErrorKind    string     `json:"error_kind,omitempty"`
 	TLSExpiresAt *time.Time `json:"tls_expires_at,omitempty"`
+	BodyMatches  *bool      `json:"body_matches,omitempty"`
 }
 
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	expectedBody := flags.String("expect-body", "", "require a literal substring in the first 64 KiB of a GET response")
 	certExpiry := flags.Duration("cert-expiry", 0, "fail HTTPS checks when the leaf certificate expires within this duration (0 disables)")
 	caFile := flags.String("ca-file", "", "PEM certificates to trust in addition to system roots")
 	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
@@ -45,6 +47,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	if *expectedBody != "" && (*method != http.MethodGet || len(*expectedBody) > 64*1024) {
+		fmt.Fprintln(diagnostics, "expect-body requires GET and a substring of at most 64 KiB")
 		return 2
 	}
 	if *certExpiry < 0 {
@@ -107,12 +113,15 @@ func run(args []string, out, diagnostics io.Writer) int {
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				results[index] = check(ctx, client, targets[index], *method)
+				results[index] = check(ctx, client, targets[index], *method, *expectedBody)
 				if *expectedStatus != 0 && results[index].Error == "" {
 					results[index].State = "DOWN"
 					if results[index].Status == *expectedStatus {
 						results[index].State = "UP"
 					}
+				}
+				if results[index].State == "UP" && results[index].BodyMatches != nil && !*results[index].BodyMatches {
+					results[index].State = "MISMATCH"
 				}
 				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
 					results[index].State = "SLOW"
@@ -140,7 +149,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if *jsonOutput {
 			outputErr = json.NewEncoder(out).Encode(result)
 		} else if result.Error != "" {
-			_, outputErr = fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q error_kind=%s\n", elapsed, target, result.Error, result.ErrorKind)
+			_, outputErr = fmt.Fprintf(out, "DOWN status=%d duration=%s url=%q error=%q error_kind=%s\n", result.Status, elapsed, target, result.Error, result.ErrorKind)
 		} else if result.TLSExpiresAt != nil {
 			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q tls_expires_at=%s\n",
 				result.State, result.Status, elapsed, target, result.TLSExpiresAt.Format(time.RFC3339))
@@ -198,7 +207,7 @@ func loadTargets(path string) ([]string, error) {
 	return targets, nil
 }
 
-func check(ctx context.Context, client *http.Client, target, method string) CheckResult {
+func check(ctx context.Context, client *http.Client, target, method, expectedBody string) CheckResult {
 	started := time.Now()
 	request, err := http.NewRequestWithContext(ctx, method, target, nil)
 	var response *http.Response
@@ -226,7 +235,21 @@ func check(ctx context.Context, client *http.Client, target, method string) Chec
 			expires := response.TLS.PeerCertificates[0].NotAfter.UTC()
 			result.TLSExpiresAt = &expires
 		}
-		response.Body.Close()
+		defer response.Body.Close()
+		if expectedBody != "" {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+			if readErr != nil {
+				result.State = "DOWN"
+				result.Error = "response body read failed"
+				result.ErrorKind = requestErrorKind(ctx, readErr)
+				if result.ErrorKind == "timeout" || result.ErrorKind == "batch_deadline" {
+					result.Error = "response body read timed out"
+				}
+				return result
+			}
+			matches := strings.Contains(string(body), expectedBody)
+			result.BodyMatches = &matches
+		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			result.State = "DOWN"
 		}

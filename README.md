@@ -27,9 +27,9 @@ a missing page:
 
 URLs are positional arguments and flags precede them. Requests run sequentially by default.
 Only HTTP 2xx responses count as UP. Redirects are reported as DOWN without
-following them. Timeouts and connection errors report status 0. The default
-timeout is five seconds per request. The response body is closed after headers
-arrive, so the tool measures reachability to headers. Exit codes are 0 for all
+following them. Connection failures before headers report status 0. The default
+timeout is five seconds per request. Unless body checking is enabled, the response
+body is closed after headers arrive. Reported latency measures time to headers. Exit codes are 0 for all
 checks passing, 1 for any failed check, and 2 for invalid arguments.
 
 Tests use local HTTP servers for successful responses, redirects, server
@@ -45,6 +45,7 @@ Add `-json` to emit one JSON object per target, in input order:
 
 Each object contains `url`, `state`, `status`, and numeric `duration_ms`.
 Connection failures additionally contain an `error` string and status 0.
+Body-read failures retain the HTTP status already received.
 JSON output uses the same exit codes as text output. Output write failures
 return exit code 2 and write a diagnostic to stderr.
 
@@ -213,8 +214,8 @@ For example, an untrusted local HTTPS certificate produces:
 {"url":"https://localhost:8443/health","state":"DOWN","status":0,"duration_ms":1.2,"error":"request failed","error_kind":"tls_verification"}
 ```
 
-Duration varies by request. HTTP responses (including failed status checks and
-SLOW results) omit `error_kind` because an HTTP response was received. Exit
+Duration varies by request. Completed HTTP checks (including failed status
+checks and SLOW results) omit `error_kind`. Body-read failures include it. Exit
 codes and the existing sanitized `error` messages are unchanged. Categories
 are derived from typed errors without printing underlying error text, so
 request URLs containing query tokens are not exposed by diagnostics.
@@ -245,3 +246,38 @@ certificate still fails the handshake and reports DOWN with
 `error_kind=tls_verification`. This feature checks the leaf certificate only;
 it does not warn about intermediate/root expiry or implement revocation checks.
 Tests use generated local certificates, with no external services or checked-in keys.
+
+## Verify a health response body
+
+A reachable service can return a login page or a degraded health message with
+HTTP 200. Require a case-sensitive literal substring to catch this:
+
+```sh
+./uptime-monitor -expect-body '"status":"healthy"' -timeout 2s -json http://localhost:8000/health
+```
+
+This is a literal byte substring check, not JSON parsing or a regular expression.
+The check reads at most the first 64 KiB of the decoded response body. A match
+must be fully contained in that prefix. It waits for EOF, the prefix limit,
+or a read error; finding a substring early does not stop the read. An empty
+expectation disables body checks. Expectations longer than 64 KiB or using
+a non-empty expectation with HEAD return exit code 2 before any requests.
+
+JSON includes `body_matches` when the assertion was evaluated. A check that
+passes the status policy but lacks the substring becomes `MISMATCH` with exit
+code 1. A failed HTTP status remains DOWN. MISMATCH takes precedence over
+latency and certificate-expiry warnings. Neither response contents nor the
+expected substring is included in reports.
+
+Both the per-request timeout and shared deadline apply while reading the body.
+Read failures report DOWN with a sanitized error and `error_kind`, preserving
+the received HTTP status; `body_matches` is omitted because the assertion was
+not completed. `duration_ms` still measures time to response headers, while
+the invocation may additionally spend time reading the bounded body.
+
+For a local demo, put `{"status":"healthy"}` in `health.json` beside your demo
+Python server's files, then run:
+
+```sh
+./uptime-monitor -expect-body '"status":"healthy"' http://127.0.0.1:8000/health.json
+```
