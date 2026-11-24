@@ -218,3 +218,30 @@ SLOW results) omit `error_kind` because an HTTP response was received. Exit
 codes and the existing sanitized `error` messages are unchanged. Categories
 are derived from typed errors without printing underlying error text, so
 request URLs containing query tokens are not exposed by diagnostics.
+
+## Warn before an HTTPS certificate expires
+
+Use a renewal window to detect a certificate approaching expiration while
+the service is still reachable:
+
+```sh
+./uptime-monitor -cert-expiry 168h -json https://localhost:8443/health
+./uptime-monitor -ca-file company-ca.pem -cert-expiry 720h https://localhost:8443/health
+```
+
+A check that would otherwise be UP becomes `EXPIRING` with exit code 1 when
+the server's leaf certificate expires at or before the current time plus the
+window. HTTP status and response time are retained. The default window is
+0 (disabled). Use hours for days (`168h` is seven days); negative values
+return exit code 2 before requests start.
+
+Responses received over HTTPS include `tls_expires_at`, a UTC RFC 3339 timestamp,
+in JSON and text output, even when the window is disabled. Plain HTTP and
+failed TLS handshakes omit this field. Plain HTTP checks are unaffected by the
+window. Existing DOWN and SLOW outcomes take precedence over EXPIRING.
+
+Normal TLS verification remains enabled. An already expired or untrusted
+certificate still fails the handshake and reports DOWN with
+`error_kind=tls_verification`. This feature checks the leaf certificate only;
+it does not warn about intermediate/root expiry or implement revocation checks.
+Tests use generated local certificates, with no external services or checked-in keys.

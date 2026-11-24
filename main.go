@@ -19,17 +19,19 @@ import (
 )
 
 type CheckResult struct {
-	URL        string  `json:"url"`
-	State      string  `json:"state"`
-	Status     int     `json:"status"`
-	DurationMS float64 `json:"duration_ms"`
-	Error      string  `json:"error,omitempty"`
-	ErrorKind  string  `json:"error_kind,omitempty"`
+	URL          string     `json:"url"`
+	State        string     `json:"state"`
+	Status       int        `json:"status"`
+	DurationMS   float64    `json:"duration_ms"`
+	Error        string     `json:"error,omitempty"`
+	ErrorKind    string     `json:"error_kind,omitempty"`
+	TLSExpiresAt *time.Time `json:"tls_expires_at,omitempty"`
 }
 
 func run(args []string, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	certExpiry := flags.Duration("cert-expiry", 0, "fail HTTPS checks when the leaf certificate expires within this duration (0 disables)")
 	caFile := flags.String("ca-file", "", "PEM certificates to trust in addition to system roots")
 	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
 	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
@@ -43,6 +45,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	if *certExpiry < 0 {
+		fmt.Fprintln(diagnostics, "cert-expiry must be non-negative")
 		return 2
 	}
 	if *deadline < 0 {
@@ -111,6 +117,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
 					results[index].State = "SLOW"
 				}
+				if results[index].State == "UP" && *certExpiry > 0 && results[index].TLSExpiresAt != nil &&
+					!results[index].TLSExpiresAt.After(time.Now().Add(*certExpiry)) {
+					results[index].State = "EXPIRING"
+				}
 			}
 		}()
 	}
@@ -131,6 +141,9 @@ func run(args []string, out, diagnostics io.Writer) int {
 			outputErr = json.NewEncoder(out).Encode(result)
 		} else if result.Error != "" {
 			_, outputErr = fmt.Fprintf(out, "DOWN status=0 duration=%s url=%q error=%q error_kind=%s\n", elapsed, target, result.Error, result.ErrorKind)
+		} else if result.TLSExpiresAt != nil {
+			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q tls_expires_at=%s\n",
+				result.State, result.Status, elapsed, target, result.TLSExpiresAt.Format(time.RFC3339))
 		} else {
 			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q\n", result.State, result.Status, elapsed, target)
 		}
@@ -209,6 +222,10 @@ func check(ctx context.Context, client *http.Client, target, method string) Chec
 		}
 	} else {
 		result.Status = response.StatusCode
+		if response.TLS != nil && len(response.TLS.PeerCertificates) > 0 {
+			expires := response.TLS.PeerCertificates[0].NotAfter.UTC()
+			result.TLSExpiresAt = &expires
+		}
 		response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			result.State = "DOWN"
