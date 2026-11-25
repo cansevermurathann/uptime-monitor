@@ -64,7 +64,8 @@ Each request keeps its own timeout, which starts when that request begins.
 
 Create a UTF-8 text file with one URL per line. Blank lines and lines beginning
 with `#` are ignored, and surrounding whitespace is trimmed. Both Windows
-and Unix line endings are supported.
+and Unix line endings are supported. An optional UTF-8 BOM at the start
+of the input is ignored.
 
 ```text
 # Local services
@@ -281,3 +282,34 @@ Python server's files, then run:
 ```sh
 ./uptime-monitor -expect-body '"status":"healthy"' http://127.0.0.1:8000/health.json
 ```
+
+## Read a generated target list from stdin
+
+Use `-file -` to pipe a finite list from another command without a temporary file:
+
+```sh
+cat targets.txt | ./uptime-monitor -file - -concurrency 4 -timeout 2s -json
+```
+
+PowerShell:
+
+```powershell
+Get-Content .\targets.txt | .\uptime-monitor.exe -file - -concurrency 4 -json
+```
+
+Stdin uses the same format as target files: one URL per line, optional blank
+lines and full-line `#` comments, whitespace trimming, LF/CRLF endings, and an
+optional UTF-8 BOM at the very beginning. UTF-16 input is not supported.
+An unterminated final line is accepted. The scanner's 64 KiB line limit
+also applies. A real file named `-` can be read as `-file ./-`.
+
+Input targets precede positional URLs and retain their order in output.
+The entire input is read to EOF and all URLs are validated before any network
+requests start. An input error, an oversized line, or an invalid URL returns
+exit code 2 without sending requests; empty input requires positional targets.
+Stdin is only read when explicitly selected with `-file -` and is not closed
+by the application.
+
+The producer must finish its output and close the pipe. Target loading is
+outside the `-deadline` network budget, so this option does not impose a timeout
+on waiting for stdin. This is a single batch, not a continuous stream monitor.

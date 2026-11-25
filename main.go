@@ -30,6 +30,10 @@ type CheckResult struct {
 }
 
 func run(args []string, out, diagnostics io.Writer) int {
+	return runWithInput(args, os.Stdin, out, diagnostics)
+}
+
+func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	expectedBody := flags.String("expect-body", "", "require a literal substring in the first 64 KiB of a GET response")
@@ -38,7 +42,7 @@ func run(args []string, out, diagnostics io.Writer) int {
 	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
 	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
 	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
-	file := flags.String("file", "", "read one HTTP URL per line")
+	file := flags.String("file", "", "read one HTTP URL per line (use - for stdin)")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
 	maxLatency := flags.Duration("max-latency", 0, "fail successful checks above this response-header latency (0 disables)")
@@ -72,7 +76,13 @@ func run(args []string, out, diagnostics io.Writer) int {
 
 	targets := flags.Args()
 	if *file != "" {
-		loaded, err := loadTargets(*file)
+		var loaded []string
+		var err error
+		if *file == "-" {
+			loaded, err = readTargets(input)
+		} else {
+			loaded, err = loadTargets(*file)
+		}
 		if err != nil {
 			fmt.Fprintln(diagnostics, "read targets:", err)
 			return 2
@@ -192,10 +202,20 @@ func loadTargets(path string) ([]string, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return readTargets(file)
+}
+
+func readTargets(input io.Reader) ([]string, error) {
 	var targets []string
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(input)
+	firstLine := true
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
+		if firstLine {
+			line = strings.TrimPrefix(line, "\uFEFF")
+			firstLine = false
+		}
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
