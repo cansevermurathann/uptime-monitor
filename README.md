@@ -85,8 +85,25 @@ requests start. Missing files, unreadable files, lines above the scanner's
 
 The [Go checks workflow](https://github.com/cansevermurathann/uptime-monitor/actions/workflows/tests.yml)
 checks formatting, runs local-server tests with the race detector, analyzes
-code with `go vet`, and builds the CLI. It runs on Linux with Go 1.24 and 1.27
-for pushes and pull requests targeting `main`, and can be started manually.
+code with `go vet`, and builds the CLI. Every push and pull request targeting
+`main` runs the following matrix; the workflow can also be started manually:
+
+| Runner | Go versions | Validation |
+| --- | --- | --- |
+| Linux (`ubuntu-latest`) | 1.24.x, 1.27.x | Formatting, race-enabled local-server tests, vet, build |
+| Windows (`windows-latest`) | 1.24.x, 1.27.x | Same checks, plus executing `uptime-monitor.exe -help` in PowerShell |
+
+Each runner builds and tests natively. The Windows executable check verifies
+that the built program starts successfully and exposes its target-list option.
+The format check uses Bash on both runners; Go commands use the runner's
+default shell. `.gitattributes` keeps Go, workflow, and Markdown files in LF
+form on checkout, avoiding platform-dependent formatting failures.
+
+The test suite uses local HTTP/TLS servers, generated certificates, temporary
+files, and injected stdin. Service checks do not require access to public
+endpoints. The Windows race tests require a working C compiler; GitHub's
+hosted runner provides the toolchain. For local prerequisites, see the
+[Go race detector documentation](https://go.dev/doc/articles/race_detector).
 
 ## Enforce a response-time budget
 

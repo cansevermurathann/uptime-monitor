@@ -9,12 +9,14 @@ permissions:
   contents: read
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    name: Go ${{ matrix.go }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         go: ['1.24.x', '1.27.x']
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -24,6 +26,7 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: false
       - name: Check formatting
+        shell: bash
         run: test -z "$(gofmt -l .)"
       - name: Test with race detector
         run: go test -race -timeout 60s ./...
@@ -31,3 +34,15 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
+
+      - name: Run the Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $helpText = & .\uptime-monitor.exe -help 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "CLI help failed with exit code $LASTEXITCODE"
+          }
+          if (($helpText -join "`n") -notmatch '-file') {
+            throw "CLI help did not expose the target-list option"
+          }
