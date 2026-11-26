@@ -146,7 +146,7 @@ func TestAdditionalTrustIsIsolated(t *testing.T) {
 	_, bundle := testCertificate(t, false, false)
 	defaultTransport := http.DefaultTransport.(*http.Transport)
 	originalTLSConfig := defaultTransport.TLSClientConfig
-	transport, err := newTransport(writeCA(t, bundle))
+	transport, err := newTransport(writeCA(t, bundle), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestAdditionalTrustIsIsolated(t *testing.T) {
 	if defaultTransport.TLSClientConfig != originalTLSConfig {
 		t.Fatal("global transport was modified")
 	}
-	normal, err := newTransport("")
+	normal, err := newTransport("", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

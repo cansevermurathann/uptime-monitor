@@ -39,6 +39,8 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 	flags.SetOutput(diagnostics)
 	expectedBody := flags.String("expect-body", "", "require a literal substring in the first 64 KiB of a GET response")
 	certExpiry := flags.Duration("cert-expiry", 0, "fail HTTPS checks when the leaf certificate expires within this duration (0 disables)")
+	clientCert := flags.String("client-cert", "", "PEM client certificate chain for mutual TLS")
+	clientKey := flags.String("client-key", "", "PEM private key matching -client-cert")
 	caFile := flags.String("ca-file", "", "PEM certificates to trust in addition to system roots")
 	deadline := flags.Duration("deadline", 0, "maximum time for the entire request phase (0 disables)")
 	method := flags.String("method", http.MethodGet, "HTTP request method (GET or HEAD)")
@@ -102,7 +104,7 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 			return 2
 		}
 	}
-	transport, err := newTransport(*caFile)
+	transport, err := newTransport(*caFile, *clientCert, *clientKey)
 	if err != nil {
 		fmt.Fprintln(diagnostics, "configure TLS:", err)
 		return 2
@@ -182,23 +184,37 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 }
 
 // Each invocation owns its transport and its additional trust roots.
-func newTransport(caFile string) (*http.Transport, error) {
+func newTransport(caFile, clientCertFile, clientKeyFile string) (*http.Transport, error) {
+	if (clientCertFile == "") != (clientKeyFile == "") {
+		return nil, errors.New("client-cert and client-key must be supplied together")
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if caFile == "" {
+	if caFile == "" && clientCertFile == "" {
 		return transport, nil
 	}
-	data, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read CA file: %w", err)
+	config := &tls.Config{}
+	if caFile != "" {
+		data, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA file: %w", err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load system roots: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(data) {
+			return nil, errors.New("CA file must contain at least one PEM certificate")
+		}
+		config.RootCAs = roots
 	}
-	roots, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, fmt.Errorf("load system roots: %w", err)
+	if clientCertFile != "" {
+		certificate, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client certificate/key pair: %w", err)
+		}
+		config.Certificates = []tls.Certificate{certificate}
 	}
-	if !roots.AppendCertsFromPEM(data) {
-		return nil, errors.New("CA file must contain at least one PEM certificate")
-	}
-	transport.TLSClientConfig = &tls.Config{RootCAs: roots}
+	transport.TLSClientConfig = config
 	return transport, nil
 }
 

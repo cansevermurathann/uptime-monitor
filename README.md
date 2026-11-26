@@ -357,3 +357,36 @@ result into SLOW with exit code 1. DOWN and MISMATCH retain precedence.
 The total budget defaults to 0 (disabled). Negative values return exit code 2
 before requests start. This budget evaluates completed checks; it does not
 cancel them. Use `-timeout` and `-deadline` for cancellation.
+
+## Check services protected by mutual TLS
+
+Supply an operator-provided client identity when a service requires client
+certificate authentication:
+
+```sh
+./uptime-monitor -ca-file company-ca.pem -client-cert client-chain.pem -client-key client-key.pem -json https://localhost:8443/health
+```
+
+Both client files must be provided together. The certificate file is PEM,
+with the client leaf certificate first followed by any intermediate
+certificates; the matching PEM private key must be unencrypted. Missing,
+malformed, or mismatched files return exit code 2 before requests start.
+Encrypted keys, PKCS#12 bundles, and hardware-backed keys are not supported.
+
+The identity applies to HTTPS targets in this invocation and is presented
+when requested by the server. Configure only targets that should receive this
+identity; the tool does not map different client identities to individual URLs.
+Plain HTTP requests do not use TLS client certificates. The server still
+decides whether to authorize the client; a rejected handshake reports DOWN
+and exit code 1.
+
+Server trust and client authentication are separate: `-ca-file` controls server
+trust, while the client certificate identifies the monitor to the server.
+Without `-ca-file`, normal system trust remains in use. Server certificate,
+hostname, and expiration verification stay enabled. The existing
+`-cert-expiry` window describes the server's leaf certificate, not the client's.
+
+Keep private keys outside the repository and restrict their filesystem
+permissions. Certificate/key contents are not included in reports. Tests
+generate temporary identities and local servers requiring verified client
+certificates; no real credentials or checked-in key files are used.
