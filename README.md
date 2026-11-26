@@ -43,7 +43,8 @@ Add `-json` to emit one JSON object per target, in input order:
 ./uptime-monitor -json -timeout 2s http://localhost:8000
 ```
 
-Each object contains `url`, `state`, `status`, and numeric `duration_ms`.
+Each object contains `url`, `state`, `status`, and numeric `duration_ms`
+and `total_duration_ms`.
 Connection failures additionally contain an `error` string and status 0.
 Body-read failures retain the HTTP status already received.
 JSON output uses the same exit codes as text output. Output write failures
@@ -330,3 +331,29 @@ by the application.
 The producer must finish its output and close the pipe. Target loading is
 outside the `-deadline` network budget, so this option does not impose a timeout
 on waiting for stdin. This is a single batch, not a continuous stream monitor.
+
+## Budget the complete check duration
+
+Body validation can be slow even when response headers arrive promptly.
+Use a total check budget to catch that:
+
+```sh
+./uptime-monitor -expect-body '"status":"healthy"' -max-total-latency 500ms -timeout 2s -json http://localhost:8000/health.json
+```
+
+Every JSON result includes numeric `total_duration_ms`; text output includes
+`total_duration`. This measures from the start of a target's check until it
+returns, including any configured bounded body read and synchronous body close.
+It is also recorded for failed requests and body-read failures. It excludes
+time in the worker queue, input loading, output writing, and asynchronous
+transport cleanup. Without `-expect-body`, the response body is not explicitly
+read, so this does not measure a full response download.
+
+`duration_ms` (text: `duration`) remains the time to response headers, or to
+request failure if headers were not received. `-max-latency` still uses that
+header metric. Both budgets may be combined; either can turn an otherwise UP
+result into SLOW with exit code 1. DOWN and MISMATCH retain precedence.
+
+The total budget defaults to 0 (disabled). Negative values return exit code 2
+before requests start. This budget evaluates completed checks; it does not
+cancel them. Use `-timeout` and `-deadline` for cancellation.

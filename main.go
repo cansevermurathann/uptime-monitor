@@ -19,14 +19,15 @@ import (
 )
 
 type CheckResult struct {
-	URL          string     `json:"url"`
-	State        string     `json:"state"`
-	Status       int        `json:"status"`
-	DurationMS   float64    `json:"duration_ms"`
-	Error        string     `json:"error,omitempty"`
-	ErrorKind    string     `json:"error_kind,omitempty"`
-	TLSExpiresAt *time.Time `json:"tls_expires_at,omitempty"`
-	BodyMatches  *bool      `json:"body_matches,omitempty"`
+	URL             string     `json:"url"`
+	State           string     `json:"state"`
+	Status          int        `json:"status"`
+	DurationMS      float64    `json:"duration_ms"`
+	TotalDurationMS float64    `json:"total_duration_ms"`
+	Error           string     `json:"error,omitempty"`
+	ErrorKind       string     `json:"error_kind,omitempty"`
+	TLSExpiresAt    *time.Time `json:"tls_expires_at,omitempty"`
+	BodyMatches     *bool      `json:"body_matches,omitempty"`
 }
 
 func run(args []string, out, diagnostics io.Writer) int {
@@ -45,6 +46,7 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 	file := flags.String("file", "", "read one HTTP URL per line (use - for stdin)")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
+	maxTotalLatency := flags.Duration("max-total-latency", 0, "fail successful checks above this total check duration (0 disables)")
 	maxLatency := flags.Duration("max-latency", 0, "fail successful checks above this response-header latency (0 disables)")
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum time per request")
 	if err := flags.Parse(args); err != nil {
@@ -89,8 +91,8 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 		}
 		targets = append(loaded, targets...)
 	}
-	if len(targets) == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 || *maxLatency < 0 {
-		fmt.Fprintln(diagnostics, "provide HTTP URLs, a positive -timeout, -concurrency from 1 to 32, and non-negative -max-latency")
+	if len(targets) == 0 || *timeout <= 0 || *workers < 1 || *workers > 32 || *maxLatency < 0 || *maxTotalLatency < 0 {
+		fmt.Fprintln(diagnostics, "provide HTTP URLs, a positive -timeout, -concurrency from 1 to 32, and non-negative -max-latency and -max-total-latency")
 		return 2
 	}
 	for _, target := range targets {
@@ -136,6 +138,9 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
 					results[index].State = "SLOW"
 				}
+				if results[index].State == "UP" && *maxTotalLatency > 0 && results[index].TotalDurationMS > float64(*maxTotalLatency)/float64(time.Millisecond) {
+					results[index].State = "SLOW"
+				}
 				if results[index].State == "UP" && *certExpiry > 0 && results[index].TLSExpiresAt != nil &&
 					!results[index].TLSExpiresAt.After(time.Now().Add(*certExpiry)) {
 					results[index].State = "EXPIRING"
@@ -152,6 +157,7 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 	for _, result := range results {
 		target := result.URL
 		elapsed := time.Duration(result.DurationMS * float64(time.Millisecond))
+		totalElapsed := time.Duration(result.TotalDurationMS * float64(time.Millisecond))
 		if result.State != "UP" {
 			exitCode = 1
 		}
@@ -159,12 +165,12 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 		if *jsonOutput {
 			outputErr = json.NewEncoder(out).Encode(result)
 		} else if result.Error != "" {
-			_, outputErr = fmt.Fprintf(out, "DOWN status=%d duration=%s url=%q error=%q error_kind=%s\n", result.Status, elapsed, target, result.Error, result.ErrorKind)
+			_, outputErr = fmt.Fprintf(out, "DOWN status=%d duration=%s total_duration=%s url=%q error=%q error_kind=%s\n", result.Status, elapsed, totalElapsed, target, result.Error, result.ErrorKind)
 		} else if result.TLSExpiresAt != nil {
-			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q tls_expires_at=%s\n",
-				result.State, result.Status, elapsed, target, result.TLSExpiresAt.Format(time.RFC3339))
+			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s total_duration=%s url=%q tls_expires_at=%s\n",
+				result.State, result.Status, elapsed, totalElapsed, target, result.TLSExpiresAt.Format(time.RFC3339))
 		} else {
-			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s url=%q\n", result.State, result.Status, elapsed, target)
+			_, outputErr = fmt.Fprintf(out, "%s status=%d duration=%s total_duration=%s url=%q\n", result.State, result.Status, elapsed, totalElapsed, target)
 		}
 		if outputErr != nil {
 			fmt.Fprintln(diagnostics, "write results:", outputErr)
@@ -227,8 +233,11 @@ func readTargets(input io.Reader) ([]string, error) {
 	return targets, nil
 }
 
-func check(ctx context.Context, client *http.Client, target, method, expectedBody string) CheckResult {
+func check(ctx context.Context, client *http.Client, target, method, expectedBody string) (result CheckResult) {
 	started := time.Now()
+	defer func() {
+		result.TotalDurationMS = float64(time.Since(started)) / float64(time.Millisecond)
+	}()
 	request, err := http.NewRequestWithContext(ctx, method, target, nil)
 	var response *http.Response
 	if err == nil {
@@ -241,7 +250,7 @@ func check(ctx context.Context, client *http.Client, target, method, expectedBod
 	displayURL.ForceQuery = false
 	displayURL.Fragment = ""
 	displayURL.RawFragment = ""
-	result := CheckResult{URL: displayURL.String(), State: "UP", DurationMS: float64(elapsed) / float64(time.Millisecond)}
+	result = CheckResult{URL: displayURL.String(), State: "UP", DurationMS: float64(elapsed) / float64(time.Millisecond)}
 	if err != nil {
 		result.State = "DOWN"
 		result.Error = "request failed"

@@ -43,7 +43,7 @@ func TestRequestErrorCategoriesDoNotExposeUnderlyingDetails(t *testing.T) {
 				return nil, fmt.Errorf("wrapped secret-token: %w", tc.err)
 			})}
 			result := check(tc.ctx, client, "https://example.test/health?token=secret-token", http.MethodGet, "")
-			if result.State != "DOWN" || result.Status != 0 || result.ErrorKind != tc.kind || result.Error != tc.message {
+			if result.State != "DOWN" || result.Status != 0 || result.ErrorKind != tc.kind || result.Error != tc.message || result.TotalDurationMS < result.DurationMS {
 				t.Fatalf("unexpected result: %+v", result)
 			}
 			data, err := json.Marshal(result)
