@@ -52,6 +52,7 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 	expectedStatus := flags.Int("expect-status", 0, "require an exact final HTTP status (0 accepts any 2xx)")
 	file := flags.String("file", "", "read one HTTP URL per line (use - for stdin)")
 	workers := flags.Int("concurrency", 1, "maximum simultaneous requests (1-32)")
+	summary := flags.Bool("summary", false, "write batch result counts to stderr after per-target output")
 	jsonOutput := flags.Bool("json", false, "write one JSON object per target")
 	maxTotalLatency := flags.Duration("max-total-latency", 0, "fail successful checks above this total check duration (0 disables)")
 	maxLatency := flags.Duration("max-latency", 0, "fail successful checks above this response-header latency (0 disables)")
@@ -185,6 +186,11 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 			return 2
 		}
 
+	}
+	if *summary {
+		if err := writeSummary(diagnostics, results); err != nil {
+			return 2
+		}
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return 130

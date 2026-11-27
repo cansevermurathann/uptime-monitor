@@ -421,3 +421,31 @@ Result output is still synchronous: cancellation does not interrupt a blocked
 output writer. An output write failure returns code 2. Tests inject a cancelable
 parent context and use local servers to verify in-flight/queued cancellation
 and preservation of completed checks without sending signals to the test runner.
+
+## Summarize a batch without changing JSON output
+
+Add `-summary` to write one aggregate line to stderr after per-target results:
+
+```sh
+./uptime-monitor -summary -json -file targets.txt > results.jsonl
+```
+
+Example stderr line:
+
+```text
+SUMMARY total=5 up=2 down=1 slow=1 mismatch=1 expiring=0 canceled=0
+```
+
+`up`, `down`, `slow`, `mismatch`, and `expiring` count the final reported states.
+`canceled` counts results with `error_kind=canceled` and is a subset of
+`down`, not an additional state. Duplicate input URLs are separate checks.
+Counts describe this single batch and are not historical uptime statistics.
+
+Stdout keeps exactly one existing text or JSON record per target, in input
+order. No URLs, response contents, certificate identities, or expectations are
+included in the summary. Normal exit codes are unchanged, including 130 for
+a canceled batch; a failure to write the summary returns exit code 2.
+
+The summary is off by default. Configuration failures and per-target output
+write failures return before a summary is emitted. Both completed and canceled
+results are included when an interrupted batch is successfully reported.
