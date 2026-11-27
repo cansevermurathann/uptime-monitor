@@ -10,6 +10,9 @@ import (
 // Classify typed errors without exposing URLs, DNS names, or certificate details
 // from their Error strings.
 func requestErrorKind(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
 	if errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "batch_deadline"
 	}

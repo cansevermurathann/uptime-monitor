@@ -30,7 +30,8 @@ Only HTTP 2xx responses count as UP. Redirects are reported as DOWN without
 following them. Connection failures before headers report status 0. The default
 timeout is five seconds per request. Unless body checking is enabled, the response
 body is closed after headers arrive. Reported latency measures time to headers. Exit codes are 0 for all
-checks passing, 1 for any failed check, and 2 for invalid arguments.
+checks passing, 1 for any failed check, 2 for invalid arguments or output failures,
+and 130 for a canceled network phase.
 
 Tests use local HTTP servers for successful responses, redirects, server
 errors, timeout cancellation, and continued checking after a failure.
@@ -211,6 +212,7 @@ Failed requests include a stable `error_kind` field in JSON and
 
 | Kind | Meaning |
 | --- | --- |
+| `canceled` | The request was explicitly canceled |
 | `batch_deadline` | The shared network budget expired for this request |
 | `timeout` | An individual request or network operation timed out |
 | `dns` | A DNS lookup failed without a recognized timeout |
@@ -390,3 +392,32 @@ Keep private keys outside the repository and restrict their filesystem
 permissions. Certificate/key contents are not included in reports. Tests
 generate temporary identities and local servers requiring verified client
 certificates; no real credentials or checked-in key files are used.
+
+## Cancel a running batch
+
+Press Ctrl+C during the network phase to cancel active requests and body reads.
+Queued targets return canceled results without starting new network requests.
+Completed results are retained, and all targets are reported in input order
+before the process exits with code 130.
+
+Canceled requests use `error_kind=canceled` and sanitized messages
+(`request canceled` or `response body read canceled`). A body-read cancellation
+retains the HTTP status already received. Previously completed checks keep
+their states and timings. A shared deadline expiring still returns exit code 1
+with `error_kind=batch_deadline`; cancellation is a separate outcome.
+
+```sh
+./uptime-monitor -timeout 60s -file targets.txt -json
+# Press Ctrl+C while network checks are running.
+```
+
+Interrupt handling is installed after input loading, validation, and TLS
+configuration. Ctrl+C before that point uses the operating system's normal
+termination behavior. The application restores normal interrupt handling
+when the batch returns. This handles Ctrl+C (`os.Interrupt`); it does not add
+custom handling for other signals.
+
+Result output is still synchronous: cancellation does not interrupt a blocked
+output writer. An output write failure returns code 2. Tests inject a cancelable
+parent context and use local servers to verify in-flight/queued cancellation
+and preservation of completed checks without sending signals to the test runner.

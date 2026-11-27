@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,10 @@ func run(args []string, out, diagnostics io.Writer) int {
 }
 
 func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) int {
+	return runWithContext(context.Background(), args, input, out, diagnostics)
+}
+
+func runWithContext(parent context.Context, args []string, input io.Reader, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
 	expectedBody := flags.String("expect-body", "", "require a literal substring in the first 64 KiB of a GET response")
@@ -113,7 +118,8 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 		return http.ErrUseLastResponse
 	}}
 	defer client.CloseIdleConnections()
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt)
+	defer stop()
 	if *deadline > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *deadline)
@@ -179,6 +185,9 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 			return 2
 		}
 
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return 130
 	}
 	return exitCode
 }
@@ -273,6 +282,8 @@ func check(ctx context.Context, client *http.Client, target, method, expectedBod
 		result.ErrorKind = requestErrorKind(ctx, err)
 		if result.ErrorKind == "timeout" || result.ErrorKind == "batch_deadline" {
 			result.Error = "request timed out"
+		} else if result.ErrorKind == "canceled" {
+			result.Error = "request canceled"
 		}
 	} else {
 		result.Status = response.StatusCode
@@ -289,6 +300,8 @@ func check(ctx context.Context, client *http.Client, target, method, expectedBod
 				result.ErrorKind = requestErrorKind(ctx, readErr)
 				if result.ErrorKind == "timeout" || result.ErrorKind == "batch_deadline" {
 					result.Error = "response body read timed out"
+				} else if result.ErrorKind == "canceled" {
+					result.Error = "response body read canceled"
 				}
 				return result
 			}
