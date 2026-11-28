@@ -24,7 +24,8 @@ func (p checkPolicy) apply(result CheckResult, now time.Time) CheckResult {
 		return result
 	}
 	result.State = "UP"
-	if result.BodyMatches != nil && !*result.BodyMatches {
+	if (result.HeadersMatch != nil && !*result.HeadersMatch) ||
+		(result.BodyMatches != nil && !*result.BodyMatches) {
 		result.State = "MISMATCH"
 		return result
 	}

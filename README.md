@@ -459,7 +459,7 @@ policy evaluator then selects the final state in this order:
 | --- | --- | --- |
 | 1 | Request or body-read error | DOWN; preserve the error and any received status |
 | 2 | HTTP status does not meet the configured status policy | DOWN |
-| 3 | An evaluated body assertion is false | MISMATCH |
+| 3 | An evaluated response header or body assertion is false | MISMATCH |
 | 4 | Header or total duration strictly exceeds its enabled budget | SLOW |
 | 5 | Server leaf expiry is at or before the enabled renewal window | EXPIRING |
 | 6 | All enabled checks pass | UP |
@@ -488,3 +488,45 @@ Latency integration tests use an explicit server delay and a millisecond
 budget, allowing for coarse platform clocks. They do not assume a fast local
 request must measure greater than one nanosecond. Exact budget equality and
 state precedence are tested by the clock-independent policy cases.
+
+
+## Assert response headers
+
+A reverse proxy or a misrouted health endpoint can return HTTP 200 with the wrong
+content type or deployment marker. Add repeatable response assertions:
+
+```sh
+./uptime-monitor -expect-header 'Content-Type:application/json' -expect-header 'X-Deployment:blue' -json http://127.0.0.1:8080/health
+./uptime-monitor -method HEAD -expect-header 'Content-Type:application/json' http://127.0.0.1:8080/health
+```
+
+For the existing Python file-server demo, create `health.json` containing
+`{"status":"healthy"}` and start `python -m http.server 8000 --bind 127.0.0.1`
+in its directory. These checks demonstrate a passing GET and a failing HEAD:
+
+```sh
+./uptime-monitor -expect-header 'Content-Type:application/json' -json http://127.0.0.1:8000/health.json
+# UP, headers_match=true, exit 0
+./uptime-monitor -method HEAD -expect-header 'Content-Type:text/html' -json http://127.0.0.1:8000/health.json
+# MISMATCH, headers_match=false, exit 1
+```
+
+All expectations must match. Names are case insensitive; values are exact and
+case sensitive after trimming surrounding spaces and tabs. Each expectation
+matches one complete field value, including any commas or colons. Repeated
+fields are searched individually; comma-separated lists are not split. An
+empty expected value requires a present, empty field. Only initial response
+headers are checked, not trailers. No request headers are added.
+
+When enabled and a response is received, JSON includes `headers_match: true`
+or `false`; a mismatch produces `MISMATCH` and exit code 1. Request/body-read
+errors and rejected HTTP statuses keep precedence. Header/body mismatches take
+precedence over latency and certificate warnings. Without this option, the
+new JSON field is omitted. Expected and received header values are not printed
+in results or summaries. Do not pass secrets as expectations: command-line
+arguments may be visible to other local processes.
+
+Local tests cover GET/HEAD, repeated and missing fields, empty values, casing,
+multiple expectations, status precedence, output privacy, and invalid input
+being rejected before requests. The implementation uses only `net/http` and
+other standard library packages.

@@ -28,6 +28,7 @@ type CheckResult struct {
 	Error           string     `json:"error,omitempty"`
 	ErrorKind       string     `json:"error_kind,omitempty"`
 	TLSExpiresAt    *time.Time `json:"tls_expires_at,omitempty"`
+	HeadersMatch    *bool      `json:"headers_match,omitempty"`
 	BodyMatches     *bool      `json:"body_matches,omitempty"`
 }
 
@@ -42,6 +43,11 @@ func runWithInput(args []string, input io.Reader, out, diagnostics io.Writer) in
 func runWithContext(parent context.Context, args []string, input io.Reader, out, diagnostics io.Writer) int {
 	flags := flag.NewFlagSet("uptime-monitor", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
+	var rawHeaders []string
+	flags.Func("expect-header", "require NAME:VALUE in response headers (repeatable, exact value)", func(value string) error {
+		rawHeaders = append(rawHeaders, value)
+		return nil
+	})
 	expectedBody := flags.String("expect-body", "", "require a literal substring in the first 64 KiB of a GET response")
 	certExpiry := flags.Duration("cert-expiry", 0, "fail HTTPS checks when the leaf certificate expires within this duration (0 disables)")
 	clientCert := flags.String("client-cert", "", "PEM client certificate chain for mutual TLS")
@@ -61,6 +67,11 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 		if err == flag.ErrHelp {
 			return 0
 		}
+		return 2
+	}
+	expectedHeaders, err := parseHeaderExpectations(rawHeaders)
+	if err != nil {
+		fmt.Fprintln(diagnostics, err)
 		return 2
 	}
 	if *expectedBody != "" && (*method != http.MethodGet || len(*expectedBody) > 64*1024) {
@@ -140,7 +151,7 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				result := check(ctx, client, targets[index], *method, *expectedBody)
+				result := check(ctx, client, targets[index], *method, *expectedBody, expectedHeaders)
 				results[index] = policy.apply(result, time.Now())
 			}
 		}()
@@ -252,7 +263,7 @@ func readTargets(input io.Reader) ([]string, error) {
 	return targets, nil
 }
 
-func check(ctx context.Context, client *http.Client, target, method, expectedBody string) (result CheckResult) {
+func check(ctx context.Context, client *http.Client, target, method, expectedBody string, expectedHeaders []headerExpectation) (result CheckResult) {
 	started := time.Now()
 	defer func() {
 		result.TotalDurationMS = float64(time.Since(started)) / float64(time.Millisecond)
@@ -281,6 +292,10 @@ func check(ctx context.Context, client *http.Client, target, method, expectedBod
 		}
 	} else {
 		result.Status = response.StatusCode
+		if len(expectedHeaders) > 0 {
+			matches := headersMatch(response.Header, expectedHeaders)
+			result.HeadersMatch = &matches
+		}
 		if response.TLS != nil && len(response.TLS.PeerCertificates) > 0 {
 			expires := response.TLS.PeerCertificates[0].NotAfter.UTC()
 			result.TLSExpiresAt = &expires

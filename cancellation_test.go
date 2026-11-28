@@ -143,7 +143,7 @@ func TestCancellationDuringBodyReadPreservesStatus(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: body, Header: make(http.Header), Request: r}, nil
 	})}
 	done := make(chan CheckResult, 1)
-	go func() { done <- check(ctx, client, "https://example.test/health", "GET", "healthy") }()
+	go func() { done <- check(ctx, client, "https://example.test/health", "GET", "healthy", nil) }()
 	select {
 	case <-body.started:
 	case <-time.After(time.Second):
