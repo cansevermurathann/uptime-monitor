@@ -483,3 +483,8 @@ tests still cover CLI integration, cancellation, TLS, and output behavior.
 ```sh
 go test -run TestCheckPolicy ./...
 ```
+
+Latency integration tests use an explicit server delay and a millisecond
+budget, allowing for coarse platform clocks. They do not assume a fast local
+request must measure greater than one nanosecond. Exact budget equality and
+state precedence are tested by the clock-independent policy cases.

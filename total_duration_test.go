@@ -55,7 +55,7 @@ func TestTotalDurationRecordedForBodyReadFailure(t *testing.T) {
 	defer server.Close()
 	var out, diagnostics bytes.Buffer
 	code := run([]string{"-expect-body", "healthy", "-timeout", "100ms",
-		"-max-total-latency", "1ns", "-json", server.URL}, &out, &diagnostics)
+		"-max-total-latency", "1ms", "-json", server.URL}, &out, &diagnostics)
 	var result CheckResult
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -66,11 +66,11 @@ func TestTotalDurationRecordedForBodyReadFailure(t *testing.T) {
 	}
 }
 
-func TestTotalBudgetPreservesMismatchAndTextTiming(t *testing.T) {
+func TestMismatchReportsTotalTextTiming(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "degraded") }))
 	defer server.Close()
 	var out, diagnostics bytes.Buffer
-	code := run([]string{"-expect-body", "healthy", "-max-total-latency", "1ns", server.URL}, &out, &diagnostics)
+	code := run([]string{"-expect-body", "healthy", server.URL}, &out, &diagnostics)
 	if code != 1 || !strings.HasPrefix(out.String(), "MISMATCH ") || !strings.Contains(out.String(), "total_duration=") {
 		t.Fatalf("exit=%d out=%s diagnostics=%s", code, &out, &diagnostics)
 	}

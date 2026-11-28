@@ -26,7 +26,6 @@ func TestResponseBodyAssertions(t *testing.T) {
 		{"match ends at limit", strings.Repeat("x", 64*1024-2) + "OK", "OK", "UP", 200, 0, nil, true},
 		{"match beyond limit", strings.Repeat("x", 64*1024) + "OK", "OK", "MISMATCH", 200, 1, nil, false},
 		{"match crosses limit", strings.Repeat("x", 64*1024-1) + "OK", "OK", "MISMATCH", 200, 1, nil, false},
-		{"mismatch before latency warning", "degraded", "healthy", "MISMATCH", 200, 1, []string{"-max-latency", "1ns"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

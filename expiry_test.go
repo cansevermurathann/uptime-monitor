@@ -27,7 +27,6 @@ func TestCertificateExpiryPolicy(t *testing.T) {
 		{name: "outside window", window: "30m", state: "UP", status: 204},
 		{name: "expected status", window: "2h", state: "EXPIRING", status: 404, exit: 1, extra: []string{"-expect-status", "404"}},
 		{name: "HTTP failure takes precedence", window: "2h", state: "DOWN", status: 503, exit: 1},
-		{name: "latency takes precedence", window: "2h", state: "SLOW", status: 204, exit: 1, extra: []string{"-max-latency", "1ns"}},
 		{name: "expired certificate stays DOWN", window: "2h", state: "DOWN", status: 204, expired: true, exit: 1},
 		{name: "untrusted certificate stays DOWN", window: "2h", state: "DOWN", status: 204, untrusted: true, exit: 1},
 	} {

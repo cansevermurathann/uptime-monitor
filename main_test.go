@@ -202,9 +202,13 @@ func TestInvalidFileTargets(t *testing.T) {
 }
 
 func TestLatencyBudget(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Make the integration measurement visible even on coarse clocks.
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(204)
+	}))
 	defer server.Close()
-	for _, budget := range []string{"0", "10s", "1ns"} {
+	for _, budget := range []string{"0", "10s", "1ms"} {
 		var out, diagnostics bytes.Buffer
 		code := run([]string{"-json", "-max-latency", budget, server.URL}, &out, &diagnostics)
 		var result CheckResult
@@ -212,7 +216,7 @@ func TestLatencyBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantState, wantCode := "UP", 0
-		if budget == "1ns" {
+		if budget == "1ms" {
 			wantState, wantCode = "SLOW", 1
 		}
 		if result.State != wantState || code != wantCode || result.Status != 204 {
