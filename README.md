@@ -449,3 +449,37 @@ a canceled batch; a failure to write the summary returns exit code 2.
 The summary is off by default. Configuration failures and per-target output
 write failures return before a summary is emitted. Both completed and canceled
 results are included when an interrupted batch is successfully reported.
+
+## Result policy and precedence
+
+The HTTP checker records response observations and request failures. A separate
+policy evaluator then selects the final state in this order:
+
+| Priority | Condition | State |
+| --- | --- | --- |
+| 1 | Request or body-read error | DOWN; preserve the error and any received status |
+| 2 | HTTP status does not meet the configured status policy | DOWN |
+| 3 | An evaluated body assertion is false | MISMATCH |
+| 4 | Header or total duration strictly exceeds its enabled budget | SLOW |
+| 5 | Server leaf expiry is at or before the enabled renewal window | EXPIRING |
+| 6 | All enabled checks pass | UP |
+
+A duration exactly equal to its budget passes. Certificate expiry exactly on
+the renewal boundary warns. A matching explicit status (including a configured
+non-2xx status) remains subject to body, latency, and expiry checks.
+
+For example, against the local `health.json` demo:
+
+```sh
+./uptime-monitor -expect-status 200 -expect-body '"status":"healthy"' -max-latency 500ms -max-total-latency 1s -json http://127.0.0.1:8000/health.json
+```
+
+The evaluator in `policy.go` takes an observation and an explicit evaluation
+time, returns a new result, and performs no network calls or clock reads.
+Its table-driven tests exercise exact boundaries and conflicting conditions
+without sleeping or depending on a live service. The existing local-server
+tests still cover CLI integration, cancellation, TLS, and output behavior.
+
+```sh
+go test -run TestCheckPolicy ./...
+```

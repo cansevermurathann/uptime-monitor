@@ -126,6 +126,12 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 		ctx, cancel = context.WithTimeout(ctx, *deadline)
 		defer cancel()
 	}
+	policy := checkPolicy{
+		expectedStatus:  *expectedStatus,
+		maxLatency:      *maxLatency,
+		maxTotalLatency: *maxTotalLatency,
+		certExpiry:      *certExpiry,
+	}
 	results := make([]CheckResult, len(targets))
 	jobs := make(chan int)
 	var group sync.WaitGroup
@@ -134,26 +140,8 @@ func runWithContext(parent context.Context, args []string, input io.Reader, out,
 		go func() {
 			defer group.Done()
 			for index := range jobs {
-				results[index] = check(ctx, client, targets[index], *method, *expectedBody)
-				if *expectedStatus != 0 && results[index].Error == "" {
-					results[index].State = "DOWN"
-					if results[index].Status == *expectedStatus {
-						results[index].State = "UP"
-					}
-				}
-				if results[index].State == "UP" && results[index].BodyMatches != nil && !*results[index].BodyMatches {
-					results[index].State = "MISMATCH"
-				}
-				if results[index].State == "UP" && *maxLatency > 0 && results[index].DurationMS > float64(*maxLatency)/float64(time.Millisecond) {
-					results[index].State = "SLOW"
-				}
-				if results[index].State == "UP" && *maxTotalLatency > 0 && results[index].TotalDurationMS > float64(*maxTotalLatency)/float64(time.Millisecond) {
-					results[index].State = "SLOW"
-				}
-				if results[index].State == "UP" && *certExpiry > 0 && results[index].TLSExpiresAt != nil &&
-					!results[index].TLSExpiresAt.After(time.Now().Add(*certExpiry)) {
-					results[index].State = "EXPIRING"
-				}
+				result := check(ctx, client, targets[index], *method, *expectedBody)
+				results[index] = policy.apply(result, time.Now())
 			}
 		}()
 	}
@@ -313,9 +301,6 @@ func check(ctx context.Context, client *http.Client, target, method, expectedBod
 			}
 			matches := strings.Contains(string(body), expectedBody)
 			result.BodyMatches = &matches
-		}
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			result.State = "DOWN"
 		}
 	}
 
